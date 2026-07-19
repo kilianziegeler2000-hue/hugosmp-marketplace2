@@ -398,14 +398,6 @@ async def discord_callback(code: Optional[str] = None):
 async def auth_me(user: dict = Depends(get_current_user)):
     return user
 
-
-# ---------------- Stripe payments ----------------
-def get_stripe(request: Request) -> StripeCheckout:
-    host_url = str(request.base_url).rstrip("/")
-    webhook_url = f"{host_url}/api/webhook/stripe"
-    return StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
-
-
 async def grant_plan_for_session(session_id: str):
     """Idempotently grant the plan tied to a paid session."""
     tx = await db.payment_transactions.find_one({"session_id": session_id})
