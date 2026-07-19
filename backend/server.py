@@ -14,6 +14,13 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import Any, List, Optional
 from datetime import datetime, timezone, timedelta
 
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout,
+    CheckoutSessionResponse,
+    CheckoutStatusResponse,
+    CheckoutSessionRequest,
+)
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
@@ -26,11 +33,20 @@ db = client[os.environ['DB_NAME']]
 DISCORD_CLIENT_ID = os.environ.get('DISCORD_CLIENT_ID', '')
 DISCORD_CLIENT_SECRET = os.environ.get('DISCORD_CLIENT_SECRET', '')
 DISCORD_REDIRECT_URI = os.environ.get('DISCORD_REDIRECT_URI', '')
+GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
+GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+GOOGLE_REDIRECT_URI = os.environ.get(
+    'GOOGLE_REDIRECT_URI',
+    'https://hugosmp-marketplace-neu.onrender.com/api/auth/google/callback',
+)
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', 'sk_test_emergent')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'change_me')
 JWT_ALGO = 'HS256'
 
 DISCORD_API = 'https://discord.com/api'
+GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth'
+GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
+GOOGLE_USERINFO_URL = 'https://openidconnect.googleapis.com/v1/userinfo'
 
 # Subscription plans (amounts defined server-side ONLY)
 PLANS = {
@@ -201,26 +217,10 @@ async def ingest_auctions(body: AuctionIngestRequest, _: None = Depends(require_
     new_ids = set(current_ids) - previous_ids
 
     for auction in normalized:
-        existing = await db.auctions.find_one(
-            {"id": auction["id"]},
-            {"_id": 0, "firstSeenAt": 1},
-        )
+        existing = await db.auctions.find_one({"id": auction["id"]}, {"_id": 0, "firstSeenAt": 1})
         if existing and existing.get("firstSeenAt"):
             auction["firstSeenAt"] = existing["firstSeenAt"]
-
-        # MongoDB erlaubt nicht, dass das unveränderliche Feld "_id"
-        # innerhalb eines Updates gesetzt oder geändert wird.
-        clean_auction = {
-            key: value
-            for key, value in auction.items()
-            if key != "_id"
-        }
-
-        await db.auctions.update_one(
-            {"id": clean_auction["id"]},
-            {"$set": clean_auction},
-            upsert=True,
-        )
+        await db.auctions.update_one({"id": auction["id"]}, {"$set": auction}, upsert=True)
 
     if current_ids:
         await db.auctions.update_many(
@@ -238,23 +238,8 @@ async def ingest_auctions(body: AuctionIngestRequest, _: None = Depends(require_
         "totalAuctions": len(normalized),
         "newAuctions": len(new_ids),
     }
-    # insert_one() ergänzt das übergebene Dictionary direkt um "_id".
-    # Deshalb wird hier ausdrücklich eine Kopie eingefügt. Das ursprüngliche
-    # snapshot-Dictionary bleibt ohne "_id" und kann sicher für $set verwendet werden.
-    await db.auction_scans.insert_one(dict(snapshot))
-
-    scanner_state_update = {
-        "id": "auction-scanner",
-        **snapshot,
-    }
-    scanner_state_update.pop("_id", None)
-
-    await db.scanner_state.update_one(
-        {"id": "auction-scanner"},
-        {"$set": scanner_state_update},
-        upsert=True,
-    )
-
+    await db.auction_scans.insert_one(snapshot)
+    await db.scanner_state.update_one({"id": "auction-scanner"}, {"$set": {"id": "auction-scanner", **snapshot}}, upsert=True)
     return {"ok": True, **snapshot}
 
 
@@ -325,7 +310,90 @@ async def server_status():
     return result
 
 
-# ---------------- Discord OAuth ----------------
+# ---------------- Google OAuth ----------------
+@api_router.get("/auth/google/login")
+async def google_login(return_url: str = "http://localhost:3000"):
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Google-Anmeldung ist noch nicht konfiguriert")
+    if not (return_url.startswith("https://") or return_url.startswith("http://localhost")):
+        raise HTTPException(status_code=400, detail="Ungültige Rücksprungadresse")
+
+    state = jwt.encode(
+        {"return_url": return_url.rstrip("/"), "exp": int(time.time()) + 600},
+        JWT_SECRET,
+        algorithm=JWT_ALGO,
+    )
+    params = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "response_type": "code",
+        "scope": "openid email profile",
+        "state": state,
+        "prompt": "select_account",
+    }
+    query = requests.compat.urlencode(params)
+    return {"url": f"{GOOGLE_AUTH_URL}?{query}"}
+
+
+@api_router.get("/auth/google/callback")
+async def google_callback(code: Optional[str] = None, state: Optional[str] = None):
+    frontend = "http://localhost:3000"
+    try:
+        if state:
+            state_data = jwt.decode(state, JWT_SECRET, algorithms=[JWT_ALGO])
+            frontend = state_data.get("return_url", frontend)
+        if not code:
+            return RedirectResponse(url=f"{frontend}/?auth=error")
+
+        token_res = requests.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "client_id": GOOGLE_CLIENT_ID,
+                "client_secret": GOOGLE_CLIENT_SECRET,
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": GOOGLE_REDIRECT_URI,
+            },
+            timeout=15,
+        )
+        token_res.raise_for_status()
+        access_token = token_res.json().get("access_token")
+
+        user_res = requests.get(
+            GOOGLE_USERINFO_URL,
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+        user_res.raise_for_status()
+        google_user = user_res.json()
+        user_id = f"google:{google_user['sub']}"
+
+        await db.users.update_one(
+            {"id": user_id},
+            {
+                "$set": {
+                    "username": google_user.get("name") or google_user.get("email") or "Spieler",
+                    "avatar": google_user.get("picture"),
+                    "email": google_user.get("email"),
+                    "provider": "google",
+                },
+                "$setOnInsert": {
+                    "id": user_id,
+                    "plan": "free",
+                    "plan_expiry": None,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                },
+            },
+            upsert=True,
+        )
+        token = create_jwt(user_id)
+        return RedirectResponse(url=f"{frontend}/?token={token}")
+    except Exception as e:
+        logger.error(f"google callback error: {e}")
+        return RedirectResponse(url=f"{frontend}/?auth=error")
+
+
+# ---------------- Discord OAuth (legacy) ----------------
 @api_router.get("/auth/discord/login")
 async def discord_login():
     url = (
@@ -397,6 +465,99 @@ async def discord_callback(code: Optional[str] = None):
 @api_router.get("/auth/me")
 async def auth_me(user: dict = Depends(get_current_user)):
     return user
+
+
+# ---------------- Stripe payments ----------------
+def get_stripe(request: Request) -> StripeCheckout:
+    host_url = str(request.base_url).rstrip("/")
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    return StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+
+
+async def grant_plan_for_session(session_id: str):
+    """Idempotently grant the plan tied to a paid session."""
+    tx = await db.payment_transactions.find_one({"session_id": session_id})
+    if not tx:
+        return
+    if tx.get("granted"):
+        return
+    plan_id = tx.get("plan_id")
+    user_id = tx.get("user_id")
+    plan = PLANS.get(plan_id)
+    if not plan or not user_id:
+        return
+    expiry = (datetime.now(timezone.utc) + timedelta(days=plan["days"])).isoformat()
+    await db.users.update_one({"id": user_id}, {"$set": {"plan": plan_id, "plan_expiry": expiry}})
+    await db.payment_transactions.update_one(
+        {"session_id": session_id}, {"$set": {"granted": True, "granted_at": datetime.now(timezone.utc).isoformat()}}
+    )
+
+
+@api_router.post("/payments/checkout")
+async def create_checkout(body: CheckoutRequest, request: Request, user: dict = Depends(get_current_user)):
+    if body.plan_id not in PLANS:
+        raise HTTPException(status_code=400, detail="Ungültiger Plan")
+    plan = PLANS[body.plan_id]
+    origin = body.origin_url.rstrip("/")
+    success_url = f"{origin}/premium?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/premium"
+
+    stripe_checkout = get_stripe(request)
+    metadata = {"user_id": user["id"], "plan_id": body.plan_id, "source": "premium_upgrade"}
+    req = CheckoutSessionRequest(
+        amount=float(plan["amount"]),
+        currency="eur",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata=metadata,
+    )
+    session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(req)
+
+    await db.payment_transactions.insert_one({
+        "session_id": session.session_id,
+        "user_id": user["id"],
+        "plan_id": body.plan_id,
+        "amount": float(plan["amount"]),
+        "currency": "eur",
+        "payment_status": "initiated",
+        "status": "pending",
+        "granted": False,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"url": session.url, "session_id": session.session_id}
+
+
+@api_router.get("/payments/status/{session_id}")
+async def checkout_status(session_id: str, request: Request):
+    stripe_checkout = get_stripe(request)
+    status_res: CheckoutStatusResponse = await stripe_checkout.get_checkout_status(session_id)
+    await db.payment_transactions.update_one(
+        {"session_id": session_id},
+        {"$set": {"payment_status": status_res.payment_status, "status": status_res.status}},
+    )
+    if status_res.payment_status == "paid":
+        await grant_plan_for_session(session_id)
+    return {"payment_status": status_res.payment_status, "status": status_res.status}
+
+
+@api_router.post("/webhook/stripe")
+async def stripe_webhook(request: Request):
+    stripe_checkout = get_stripe(request)
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature")
+    try:
+        wh = await stripe_checkout.handle_webhook(body, sig)
+        if wh.session_id:
+            await db.payment_transactions.update_one(
+                {"session_id": wh.session_id},
+                {"$set": {"payment_status": wh.payment_status, "status": "complete"}},
+            )
+            if wh.payment_status == "paid":
+                await grant_plan_for_session(wh.session_id)
+    except Exception as e:
+        logger.error(f"stripe webhook error: {e}")
+        raise HTTPException(status_code=400, detail="Webhook error")
+    return {"received": True}
 
 
 # ---------------- Support Tickets ----------------
