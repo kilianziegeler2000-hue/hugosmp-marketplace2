@@ -1,0 +1,121 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code, .mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+@layer base {
+  :root {
+    --background: 258 45% 5%;
+    --foreground: 0 0% 98%;
+    --card: 258 32% 9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 258 40% 7%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 263 90% 70%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 258 24% 15%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 258 24% 15%;
+    --muted-foreground: 255 15% 65%;
+    --accent: 258 28% 18%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 258 22% 18%;
+    --input: 258 22% 18%;
+    --ring: 263 90% 70%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply text-foreground;
+    background-color: #07050f;
+  }
+}
+
+/* ===== Galaxy background ===== */
+.galaxy-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -10;
+  background:
+    radial-gradient(1200px 820px at 82% -12%, hsl(272 75% 32% / 0.55), transparent 60%),
+    radial-gradient(1000px 720px at 8% 112%, hsl(222 78% 34% / 0.45), transparent 60%),
+    radial-gradient(760px 620px at 55% 42%, hsl(310 65% 30% / 0.28), transparent 70%),
+    linear-gradient(180deg, #08061a 0%, #0a0718 55%, #06040f 100%);
+}
+.galaxy-bg::before,
+.galaxy-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-repeat: repeat;
+}
+.galaxy-bg::before {
+  background-image:
+    radial-gradient(1.5px 1.5px at 20px 30px, #ffffff, transparent),
+    radial-gradient(1px 1px at 130px 80px, rgba(255,255,255,0.85), transparent),
+    radial-gradient(1.5px 1.5px at 90px 160px, rgba(200,210,255,0.9), transparent),
+    radial-gradient(1px 1px at 200px 120px, rgba(255,255,255,0.7), transparent),
+    radial-gradient(1.5px 1.5px at 250px 220px, rgba(220,200,255,0.9), transparent);
+  background-size: 300px 300px;
+  animation: twinkle 6s ease-in-out infinite;
+}
+.galaxy-bg::after {
+  background-image:
+    radial-gradient(1px 1px at 60px 50px, rgba(255,255,255,0.6), transparent),
+    radial-gradient(1px 1px at 180px 200px, rgba(180,200,255,0.6), transparent),
+    radial-gradient(1.5px 1.5px at 320px 120px, rgba(255,230,255,0.7), transparent),
+    radial-gradient(1px 1px at 400px 300px, rgba(255,255,255,0.5), transparent);
+  background-size: 480px 480px;
+  animation: twinkle 9s ease-in-out infinite reverse;
+}
+
+@keyframes twinkle {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 0.5; }
+}
+
+/* custom scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: hsl(258 32% 9%); }
+::-webkit-scrollbar-thumb { background: hsl(258 24% 24%); border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(263 50% 45%); }
+
+.grid-bg {
+  background-image: linear-gradient(hsl(263 30% 22% / 0.35) 1px, transparent 1px), linear-gradient(90deg, hsl(263 30% 22% / 0.35) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.glow-violet {
+  box-shadow: 0 0 0 1px hsl(263 90% 70% / 0.25), 0 8px 44px -8px hsl(263 90% 65% / 0.4);
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+.live-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fade-up 0.5s ease-out both; }
