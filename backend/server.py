@@ -14,12 +14,18 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import Any, List, Optional
 from datetime import datetime, timezone, timedelta
 
-from emergentintegrations.payments.stripe.checkout import (
-    StripeCheckout,
-    CheckoutSessionResponse,
-    CheckoutStatusResponse,
-    CheckoutSessionRequest,
-)
+try:
+    from emergentintegrations.payments.stripe.checkout import (
+        StripeCheckout,
+        CheckoutSessionResponse,
+        CheckoutStatusResponse,
+        CheckoutSessionRequest,
+    )
+except ImportError:
+    StripeCheckout = None
+    CheckoutSessionResponse = Any
+    CheckoutStatusResponse = Any
+    CheckoutSessionRequest = Any
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -37,7 +43,7 @@ GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 GOOGLE_REDIRECT_URI = os.environ.get(
     'GOOGLE_REDIRECT_URI',
-    'https://hugosmp-marketplace-neu.onrender.com/api/auth/google/callback',
+    'https://hugosmp-marketplace.onrender.com/api/auth/google/callback',
 )
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', 'sk_test_emergent')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'change_me')
@@ -468,7 +474,9 @@ async def auth_me(user: dict = Depends(get_current_user)):
 
 
 # ---------------- Stripe payments ----------------
-def get_stripe(request: Request) -> StripeCheckout:
+def get_stripe(request: Request):
+    if StripeCheckout is None:
+        raise HTTPException(status_code=503, detail="Premium-Zahlungen sind momentan nicht verfügbar")
     host_url = str(request.base_url).rstrip("/")
     webhook_url = f"{host_url}/api/webhook/stripe"
     return StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
