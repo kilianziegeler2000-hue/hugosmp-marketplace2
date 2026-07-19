@@ -43,7 +43,7 @@ GOOGLE_CLIENT_ID = os.environ.get('GOOGLE_CLIENT_ID', '')
 GOOGLE_CLIENT_SECRET = os.environ.get('GOOGLE_CLIENT_SECRET', '')
 GOOGLE_REDIRECT_URI = os.environ.get(
     'GOOGLE_REDIRECT_URI',
-    'https://hugosmp-marketplace.onrender.com/api/auth/google/callback',
+    'https://hugosmp-marketplace-neu.onrender.com/api/auth/google/callback',
 )
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY', 'sk_test_emergent')
 JWT_SECRET = os.environ.get('JWT_SECRET', 'change_me')
